@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>ArcGIS Maps SDK for JavaScript Tutorials: Search for an address, Find a route, and Find places</title>
+  <style>
+    html, body, #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+    }
+  </style>
+  <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css">
+  <script src="https://js.arcgis.com/4.29/"></script>
+  <link rel="icon" href="nav.png" type="image/x-icon">
+</head>
+<body>
+
+  <div id="viewDiv"></div>
+  <div style="background-color: white; transform: translateY(-100%); width: 100%; height: 15px; border: 1px solid rgb(255, 255, 255);" ></div>
+  
+  <!-- <button id="toggleButton" class="esri-widget esri-widget--button esri-interactive" style="position: absolute; top: 85px; left: 15px; background-image: url('option.png'); background-size: cover; width: 33px; height: 33px; border: none; background-color: rgba(20,180,243, 0.5);"></button> -->
+  <button id="toggleButton" class="esri-widget esri-widget--button esri-interactive" style="position: absolute; top: 85px; left: 8px; background-image: url('nav.png'); background-size: cover; width: 50px; height: 50px; border: none; background-color: rgba(20,180,243, 0);"></button>
+
+  <div id="searchOptions" style="display: none; position: absolute; top: 50px; right: 10px; background-color: rgba(20,180,243, 0.5); padding: 6px; box-shadow: 0 0 10px rgba(0,0,0,0.5);">
+    <select id="placesSelect" class="esri-widget esri-select" style="width: 175px; font-family: 'Avenir Next W00'; font-size: 1em;">
+    </select>
+  </div>
+
+  <script>
+    require([
+      "esri/config",
+      "esri/Map",
+      "esri/views/MapView",
+      "esri/widgets/Search",
+      "esri/Graphic",
+      "esri/rest/route",
+      "esri/rest/support/RouteParameters",
+      "esri/rest/support/FeatureSet",
+      "esri/rest/locator",
+      "esri/core/reactiveUtils"
+    ], function(esriConfig, Map, MapView, Search, Graphic, route, RouteParameters, FeatureSet, locator, reactiveUtils) {
+
+      esriConfig.apiKey = "AAPK7dfe6d445e364dc58f75ed85956467d2HeujnHsBS_Z_AdEIy7bEkcudxes-ZiuxmyG6U73mklgZX6nUUBy4cUb5_2ZDiHta";
+
+      const map = new Map({
+        basemap: "arcgis/nova" // basemap styles service
+      });
+
+      const view = new MapView({
+        container: "viewDiv",
+        map: map,
+        center: [-122.00898, 37.33492],
+        zoom: 16
+      });
+
+      const search = new Search({  // Add Search widget
+        view: view
+      });
+
+      view.ui.add(search, "top-right"); // Add to the map
+
+      const routeUrl = "https://route-api.arcgis.com/arcgis/rest/services/World/Route/NAServer/Route_World";
+      let routeGraphic, arrowGraphic;
+      let animationInterval;
+
+      view.on("click", function(event) {
+        if (view.graphics.length === 0) {
+          addGraphic("origin", event.mapPoint);
+        } else if (view.graphics.length === 1) {
+          addGraphic("destination", event.mapPoint);
+          getRoute(); // Call the route service
+        } else {
+          view.graphics.removeAll();
+          addGraphic("origin", event.mapPoint);
+        }
+      });
+
+      function addGraphic(type, point) {
+        const graphic = new Graphic({
+          symbol: {
+            type: "picture-marker",
+            url: type === "origin" ? "hp.png" : "pin.webp",
+            width: "30px",
+            height: "30px"
+          },
+          geometry: point
+        });
+        view.graphics.add(graphic);
+      }
+
+      function getRoute() {
+        const routeParams = new RouteParameters({
+          stops: new FeatureSet({
+            features: view.graphics.toArray()
+          }),
+          returnDirections: true
+        });
+
+        route.solve(routeUrl, routeParams)
+          .then(function(data) {
+            data.routeResults.forEach(function(result) {
+              result.route.symbol = {
+                type: "simple-line",
+                color: [86, 255, 103],
+                width: 5,
+                outline: {
+                  color: [255, 255, 255],
+                  width: "2px"
+                }
+              };
+              routeGraphic = result.route;
+              view.graphics.add(routeGraphic);
+
+              animateArrow(routeGraphic.geometry.paths[0]);
+            });
+
+            // Display directions
+            if (data.routeResults.length > 0) {
+              const directions = document.createElement("ol");
+              directions.classList = "esri-widget esri-widget--panel esri-directions__scroller";
+              directions.style.marginTop = "0";
+              directions.style.padding = "15px 15px 15px 30px";
+              directions.style.backgroundColor = "rgba(20,180,243, 0.3)";
+              directions.style.color = "white";
+              directions.style.backdropFilter = "blur(3px)";
+              const features = data.routeResults[0].directions.features;
+
+              // Show each direction
+              features.forEach(function(result, i) {
+                const direction = document.createElement("li");
+                direction.innerHTML = result.attributes.text + " (" + result.attributes.length.toFixed(2) + " miles)";
+                directions.appendChild(direction);
+              });
+
+              // Add close button
+              const closeButton = document.createElement("button");
+              closeButton.innerHTML = "x";
+              closeButton.style.backgroundColor = "rgba(20,180,243, 0.3)";
+              closeButton.style.color = "white";
+              closeButton.classList = "esri-widget-button esri-widget--button esri-interactive";
+              closeButton.style.marginTop = "10px";
+              closeButton.onclick = function() {
+                view.graphics.removeAll();
+                view.ui.remove(directions);
+                if (animationInterval) {
+                  clearInterval(animationInterval);
+                }
+              };
+              directions.appendChild(closeButton);
+
+              view.ui.add(directions, "top-right");
+            }
+
+          })
+          .catch(function(error) {
+            console.log(error);
+          });
+      }
+
+      function animateArrow(path) {
+        let index = 0;
+        const totalPoints = path.length;
+
+        if (arrowGraphic) {
+          view.graphics.remove(arrowGraphic);
+        }
+
+        arrowGraphic = new Graphic({
+          symbol: {
+            type: "picture-marker",
+            url: "track.png", // Replace with the name of your local image
+            width: "20px",
+            height: "20px"
+          },
+          geometry: {
+            type: "point",
+            x: path[0][0],
+            y: path[0][1]
+          }
+        });
+
+        view.graphics.add(arrowGraphic);
+
+        if (animationInterval) {
+          clearInterval(animationInterval);
+        }
+
+        animationInterval = setInterval(() => {
+          if (index < totalPoints - 1) {
+            index++;
+          } else {
+            clearInterval(animationInterval);
+          }
+
+          arrowGraphic.geometry = {
+            type: "point",
+            x: path[index][0],
+            y: path[index][1]
+          };
+        }, 1000); // Adjust the interval speed as needed
+      }
+
+      // Places search functionality
+      const places = [
+        "Choose a place type...",
+        "Parks and Outdoors",
+        "Coffee shop",
+        "Gas station",
+        "Food",
+        "Hotel"
+      ];
+
+      const placeIcons = {
+        "Parks and Outdoors": "park.png",
+        "Coffee shop": "coffee.webp",
+        "Gas station": "gas.webp",
+        "Food": "food.png",
+        "Hotel": "hotel.png"
+      };
+
+      const select = document.getElementById("placesSelect");
+
+      places.forEach((p) => {
+        const option = document.createElement("option");
+        option.value = p;
+        option.innerHTML = p;
+        select.appendChild(option);
+      });
+
+      const locatorUrl = "http://geocode-api.arcgis.com/arcgis/rest/services/World/GeocodeServer";
+
+      // Find places and add them to the map
+      function findPlaces(category, pt) {
+        locator
+          .addressToLocations(locatorUrl, {
+            location: pt,
+            categories: [category],
+            maxLocations: 25,
+            outFields: ["Place_addr", "PlaceName"]
+          })
+          .then((results) => {
+            view.closePopup();
+            view.graphics.removeAll();
+
+            results.forEach((result) => {
+              const symbol = {
+                type: "picture-marker",
+                url: placeIcons[category] || "default.png", // Use default image if category not found
+                width: "40px",
+                height: "40px"
+              };
+
+              view.graphics.add(
+                new Graphic({
+                  attributes: result.attributes, // Data attributes returned
+                  geometry: result.location, // Point returned
+                  symbol: symbol,
+                  popupTemplate: {
+                    title: "{PlaceName}", // Data attribute names
+                    content: "{Place_addr}"
+                  }
+                })
+              );
+            });
+          });
+      }
+
+      // Search for places in center of map
+      reactiveUtils.when(
+        () => view.stationary,
+        () => {
+          findPlaces(select.value, view.center);
+        }
+      );
+
+      // Listen for category changes and find places
+      select.addEventListener("change", (event) => {
+        findPlaces(event.target.value, view.center);
+      });
+
+      // Toggle search options visibility
+      const toggleButton = document.getElementById("toggleButton");
+      const searchOptions = document.getElementById("searchOptions");
+
+      toggleButton.addEventListener("click", () => {
+        if (searchOptions.style.display === "none") {
+          searchOptions.style.display = "block";
+        } else {
+          searchOptions.style.display = "none";
+        }
+      });
+
+    });
+  </script>
+</body>
+</html>
